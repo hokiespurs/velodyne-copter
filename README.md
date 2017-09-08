@@ -1,2 +1,2 @@
 # velodyne-copter
-data processing for the velodyne copter
+Data processing and documentation for the velodyne copter
