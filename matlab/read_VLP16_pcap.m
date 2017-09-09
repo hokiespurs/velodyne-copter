@@ -479,7 +479,7 @@ end
 
 function gps = get_pcap_pos(allbytes, ind_posblock, debuglevel)
 % Read GPS info from the pos part of the pcap file
-warning('need to get file with stuff and debug this...');
+warning('GPS data is not being parsed yet...');
 
 % read time
 gps.t = get_pcap_pos_time(allbytes, ind_posblock);
