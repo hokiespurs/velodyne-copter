@@ -1,11 +1,16 @@
-% visualize interpolation methods
-%% Single Return
+%% This Script visualizes the three potential azimuth interpolation methods
+% * Note that Method 3 does not extrapolate at the end, but when other data
+%    packets are present those points could be interpolated
+% * Method 3 is selected as the more accurate method
+
+%% Generate Sample Data
+DELTA_AZ = 0.4;
 t_r = kron(reshape(0:23,2,12),ones(16,1));
 t_c = repmat([0:15 0:15]',1,12);
 t_off = t_r * 55.296 + t_c * 2.304;
 
 az = nan(size(t_off));
-az(1,:) = 0:0.4:4.4;
+az(1,:) = 0:DELTA_AZ:DELTA_AZ*11;
 
 %% Method 1
 az1 = repmat(az(1,:),32,1);
@@ -23,8 +28,8 @@ hold on
 plot(t_off(:),az(:),'.','markersize',20)
 xlabel('Time ($\mu$s)','interpreter','latex','fontsize',14)
 ylabel('Azimuth (degrees)','interpreter','latex','fontsize',14)
-title('Method 1(Use Previous Azimuth)','interpreter','latex','fontsize',18)
-set(gca,'ytick',[0:0.4:4.4])
+title('Method 1 (Use Previous Azimuth)','interpreter','latex','fontsize',18)
+set(gca,'ytick',0:0.4:4.4)
 set(gca,'xtick',round(t_off(1,:),0))
 grid on
 legend({'Interpolated Azimuths','Reported Azimuths'},...
@@ -36,8 +41,8 @@ hold on
 plot(t_off(:),az(:),'.','markersize',20)
 xlabel('Time ($\mu$s)','interpreter','latex','fontsize',14)
 ylabel('Azimuth (degrees)','interpreter','latex','fontsize',14)
-title('Method 2(Velodyne pseudocode)','interpreter','latex','fontsize',18)
-set(gca,'ytick',[0:0.4:4.4])
+title('Method 2 (Velodyne pseudocode)','interpreter','latex','fontsize',18)
+set(gca,'ytick',0:0.4:4.4)
 set(gca,'xtick',round(t_off(1,:),0))
 grid on
 legend({'Interpolated Azimuths','Reported Azimuths'},...
@@ -50,7 +55,7 @@ plot(t_off(:),az(:),'.','markersize',20)
 xlabel('Time ($\mu$s)','interpreter','latex','fontsize',14)
 ylabel('Azimuth (degrees)','interpreter','latex','fontsize',14)
 title('Method 3 (Proposed)','interpreter','latex','fontsize',18)
-set(gca,'ytick',[0:0.4:4.4])
+set(gca,'ytick',0:0.4:4.4)
 set(gca,'xtick',round(t_off(1,:),0))
 grid on
 legend({'Interpolated Azimuths','Reported Azimuths'},...

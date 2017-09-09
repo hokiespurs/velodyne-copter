@@ -1,15 +1,42 @@
-function [lidar,gps] = read_VLP16_pcap(filename,npoints,DEBUGLEVEL)
-%%
-% http://velodynelidar.com/docs/manuals/VLP-16%20User%20Manual%20and%20Programming%20Guide%2063-9243%20Rev%20A.pdf
+function [lidar,gps] = read_VLP16_pcap(filename,varargin)
+% READ_VLP16_PCAP Reads Velodyne VLP16 pcap data
+%   This file reads and decodes the velodyne VLP16 lidar data from the pcap
+%   format based on the details in this manual:
+% https://github.com/hokiespurs/velodyne-copter/blob/master/doc/VLP-16%20User%20Manual%20and%20Programming%20Guide%2063-9243%20Rev%20A.pdf
+%
+%   * Code is based on 'Read_and_Decode_PCAP_v2.m' from Dr. Craig Glennie
+%
+% Required Inputs:
+%	- filename     : pcap file that will be decoded 
+%
+% Optional Inputs:
+%	- 'npoints'    : Number of points to return 
+%	- 'debuglevel' : 0 (default)==no output, 1==status updates, 2==verbose
+%	- 'rangegate'  : 2 element vector depicting minimum and maximum range
+%	- 'azgate'     : n x 2 element vector depicting min and max azimuth
+% 
+% Outputs:
+%   - lidar : Description of variable goes here
+%   - gps   : Description of variable goes here
+% 
+% Examples:
+%   - Example code goes here
+% 
+% Dependencies:
+%   - interp1nanthresh.m
+%   - loopStatus.m
+% 
+% Toolboxes Required:
+%   - n/a
+% 
+% Author        : Richie Slocum
+% Email         : richie@cormorantanalytics.com
+% Date Created  : 08-Sep-2017
+% Date Modified : 08-Sep-2017
+% Github        : https://github.com/hokiespurs/velodyne-copter
 
-%% User Inputs
-switch nargin
-    case 1
-        npoints  = inf;
-        DEBUGLEVEL  = 0;
-    case 2
-        DEBUGLEVEL  = 0; % debug output to screen (0 is none, 1 is verbose)
-end
+%% Parse Inputs
+[filename,npoints,debuglevel,rangegate,azgate] = parseInputs(filename,varargin{:});
 
 %% Constants
 % lidar data
@@ -20,35 +47,47 @@ POS_PORT    = 8308;
 POS_BYTES   = 520;
 
 NBYTES_FS = 1.1; % factor of safety when using npoints
-
+% in order to read npoints, the code takes a guess as to how much of the
+% full file should be read in. Becuase pos takes some bytes that arent
+% accounted for in the math, this factor of safety ensures more bytes than
+% needed are read in.
 %% Open and Read PCAP File
 nbytes2read = (DATA_BYTES+50) + ceil((DATA_BYTES+50) * npoints /32/12 * NBYTES_FS);
-allbytes = freadpcap(filename, nbytes2read, DEBUGLEVEL);
+allbytes = freadpcap(filename, nbytes2read, debuglevel);
 
 %% Compute Indices of "data" and "pos" blocks
 [ind_datablock, ind_posblock] = calc_pcap_inds(allbytes, npoints,...
-    DATA_PORT, DATA_BYTES, POS_PORT, POS_BYTES, DEBUGLEVEL);
+    DATA_PORT, DATA_BYTES, POS_PORT, POS_BYTES, debuglevel);
 
 %% Determine factory mode and scanner type from first data block
 [factory_mode, factory_scanner] = ...
-    get_pcap_factory(allbytes, ind_datablock, DEBUGLEVEL);
+    get_pcap_factory(allbytes, ind_datablock, debuglevel);
 
 %% Parse Data Blocks
 lidar = get_pcap_data(allbytes, ind_datablock, factory_mode, ...
-    factory_scanner, npoints, DEBUGLEVEL);
+    factory_scanner, npoints, debuglevel);
 
 %% Parse Position Blocks
-gps = get_pcap_pos(allbytes, ind_posblock, DEBUGLEVEL);
+gps = get_pcap_pos(allbytes, ind_posblock, debuglevel);
+
+%% Trim Data based on Range and Azimuth Gates
+indgoodrange = lidar.r>=rangegate(1) & lidar.r<=rangegate(2);
+indgoodaz = any(lidar.az>=azgate(:,1) & lidar.az<=azgate(:,2));
+lidar.r = lidar.r(indgoodrange & indgoodaz);
+lidar.az = lidar.az(indgoodrange & indgoodaz);
+lidar.el = lidar.el(indgoodrange & indgoodaz);
+lidar.I = lidar.I(indgoodrange & indgoodaz);
+lidar.t = lidar.t(indgoodrange & indgoodaz);
 
 end
-
-function allbytes = freadpcap(filename, nbytes, DEBUGLEVEL)
+%%
+function allbytes = freadpcap(filename, nbytes, debuglevel)
 % read all pcap data bytes into memory as "allbytes" variable
 
-fid = fopenpcap(filename,DEBUGLEVEL);
+fid = fopenpcap(filename,debuglevel);
 
 %% DEBUG
-if DEBUGLEVEL
+if debuglevel
    if nbytes==inf
        fprintf('%s... Reading All PCAP File Bytes(this can be slow)\n',...
            datestr(now));
@@ -66,7 +105,7 @@ fclose(fid);
 
 end
 
-function fid = fopenpcap(filename, DEBUGLEVEL)
+function fid = fopenpcap(filename, debuglevel)
 % open pcap file and send error on failure
 
 [fid,errmsg] = fopen(filename,'r','b'); %explicitly declare big endian
@@ -75,14 +114,14 @@ if fid < 0
    error(errmsg)
 end
 
-if DEBUGLEVEL
+if debuglevel
    fprintf('%s... Opened PCAP File: %s\n',datestr(now),filename) 
 end
 
 end
 
 function [dataind,posind] = calc_pcap_inds(allbytes,ndesiredpoints,...
-    DATA_PORT, DATA_BYTES, POS_PORT, POS_BYTES, DEBUGLEVEL)
+    DATA_PORT, DATA_BYTES, POS_PORT, POS_BYTES, debuglevel)
 % parses through the raw bytes from a pcap file and extracts the index
 % values for the beginning of the data blocks and position blocks
 %
@@ -105,7 +144,7 @@ dataind = nan(max_points,1);
 posind  = nan(max_points,1);
 
 %% DEBUG
-if DEBUGLEVEL
+if debuglevel
     fprintf('%s... Looping through to compute indices\n',datestr(now));
 end
 %% Loop through data computing indices
@@ -131,7 +170,7 @@ while (ifilepos + 59) < nbytes && (ndatapoints*32*12) < ndesiredpoints
     end
     ifilepos = ifilepos + 50 + double(npacketbytes);
     if ifilepos>nextstatus
-        if DEBUGLEVEL==2
+        if debuglevel==2
             fprintf('\t');
             loopStatus(startTime,ifilepos,nbytes,0);
             nextstatus = nextstatus + 1/nstatusupdates * nbytes;
@@ -144,14 +183,14 @@ dataind(isnan(dataind)) = [];
 posind(isnan(posind)) = [];
 
 %% DEBUG
-if DEBUGLEVEL
+if debuglevel
     fprintf('%s... Finished Index Calculations\n',datestr(now));
 end
 
 end
 
 function [factory_mode, factory_scanner] = ...
-    get_pcap_factory(allbytes,ind,DEBUGLEVEL)
+    get_pcap_factory(allbytes,ind,debuglevel)
 % Determines the factory mode and scanner from the first data block
 % Returns the values as strings
 % 
@@ -163,7 +202,6 @@ function [factory_mode, factory_scanner] = ...
 % Factory Scanner: 
 %   21h : HDL-32E 
 %   22h : VLP-16
-
 
 ind_factory_mode    = ind(1)+1204;
 ind_factory_scanner = ind(1)+1206;
@@ -187,7 +225,7 @@ switch factory_scanner_byte
         factory_scanner = 'VLP-16';
 end
 %% DEBUG
-if DEBUGLEVEL
+if debuglevel
     fprintf('%s... Factory Mode: %s\n',datestr(now), factory_mode);
     fprintf('%s... Factory Scanner: %s\n',datestr(now), factory_scanner);
 end
@@ -195,12 +233,12 @@ end
 end
 
 function lidar = get_pcap_data(allbytes, ind, factory_mode, ...
-    factory_scanner, npoints, DEBUGLEVEL)
+    factory_scanner, npoints, debuglevel)
 % parses the velodyne data blocks
 % returns structure 'lidar' with: time, azimuth, elevation, range
 
 %% DEBUG
-if DEBUGLEVEL
+if debuglevel
     fprintf('%s... Computing Data [Time]\n',datestr(now));
 end
 
@@ -209,13 +247,13 @@ end
 t = get_pcap_time(allbytes,ind,factory_mode);
 
 %% DEBUG
-if DEBUGLEVEL
+if debuglevel
     fprintf('%s... Computing Data [Az, El, R, I]\n',datestr(now));
 end
 
 %% Main Data Packet 1200 Bytes (az,el,r,I)
 [az,el,r,I]=get_pcap_sphericalcoords(allbytes,ind,t,factory_scanner,...
-    DEBUGLEVEL);
+    debuglevel);
 
 if npoints~=inf
     lidar.az = az(1:npoints); % azimuth in degrees
@@ -268,35 +306,35 @@ t = t/1000000; %conver to seconds
 end
 
 function [az,el,r,I]=get_pcap_sphericalcoords(allbytes,ind,t,...
-    factory_scanner,DEBUGLEVEL)
+    factory_scanner,debuglevel)
 % Computes the azimuth, elevation, and range for each data packet
 
 %% Compute Range
-if DEBUGLEVEL
+if debuglevel
    fprintf('%s... Computing Range\n',datestr(now)) 
 end
 r = get_pcap_r(allbytes,ind);
 
 %% Compute Intensity
-if DEBUGLEVEL
+if debuglevel
    fprintf('%s... Computing Intensity\n',datestr(now)) 
 end
 I = get_pcap_I(allbytes,ind);
 
 %% Compute Elevation Angle
-if DEBUGLEVEL
+if debuglevel
    fprintf('%s... Computing Elevation Angle\n',datestr(now)) 
 end
 el = get_pcap_el(numel(ind),factory_scanner);
 
 %% Compute Azimuth Angle
-if DEBUGLEVEL
+if debuglevel
    fprintf('%s... Computing Azimuth Angle\n',datestr(now)) 
 end
 az_raw = get_pcap_az(allbytes,ind);
 
 %% Interpolate Azimuth 
-if DEBUGLEVEL
+if debuglevel
    fprintf('%s... Interpolating Azimuth Angle\n',datestr(now)) 
 end
 az = interpAz(az_raw,t);
@@ -437,7 +475,7 @@ titlestr{2} = sprintf('the max error is %.10f degrees',max(abs(angleerror)));
 title(titlestr,'interpreter','latex','fontsize',14);
 end
 
-function gps = get_pcap_pos(allbytes, ind_posblock, DEBUGLEVEL)
+function gps = get_pcap_pos(allbytes, ind_posblock, debuglevel)
 % Read GPS info from the pos part of the pcap file
 warning('need to get file with stuff and debug this...');
 
@@ -471,4 +509,40 @@ ind = repmat(permute(ind_posblock(:),[1 2]),1,numel(nmea_ind)) + ...
            repmat(nmea_ind,npackets,1);
 
 nmea = char(allbytes(ind));
+end
+
+function [filename,npoints,debuglevel,rangegate,azgate] = parseInputs(filename,varargin)
+%%	 Call this function to parse the inputs
+
+% Default Values
+default_npoints     = inf;
+default_debuglevel  = 0;
+default_rangegate   = [0 100];
+default_azgate      = [0 360];
+
+% Check Values
+check_filename    = @(x) exist(x,'file');
+check_npoints     = @(x) isnumeric(x);
+check_debuglevel  = @(x) ismember(x,[0 1 2]);
+check_rangegate   = @(x) size(x,2)==2;
+check_azgate      = @(x) size(x,2)==2;
+
+% Parser Values
+p = inputParser;
+% Required 
+addRequired(p, 'filename' , check_filename );
+% Optional 
+% Parameter 
+addParameter(p, 'npoints'    , default_npoints   , check_npoints    );
+addParameter(p, 'debuglevel' , default_debuglevel, check_debuglevel );
+addParameter(p, 'rangegate'  , default_rangegate , check_rangegate  );
+addParameter(p, 'azgate'     , default_azgate    , check_azgate     );
+% Parse
+parse(p,filename,varargin{:});
+% Convert to variables
+filename   = p.Results.('filename');
+npoints    = p.Results.('npoints');
+debuglevel = p.Results.('debuglevel');
+rangegate  = p.Results.('rangegate');
+azgate     = p.Results.('azgate');
 end

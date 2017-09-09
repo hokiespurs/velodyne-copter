@@ -1,6 +1,7 @@
 function [Xa, Ya, Za, Ia, Ra, La, Aa] = Read_and_Decode_PCAP_v3(filename, Decimate_Rate, Total_Points)
-
-[lidar,gps] = read_VLP16_pcap(filename,Total_Points);
+% This function is meant to duplicate the function structure to compare
+% output to the function provided by Dr. Craig Glennie.
+[lidar,gps] = read_VLP16_pcap(filename,'npoints',Total_Points);
 [Xa,Ya,Za]=sph2cart((90-lidar.az)*pi/180,lidar.el*pi/180,lidar.r);
 Ia = lidar.I;
 Ra = lidar.r;
