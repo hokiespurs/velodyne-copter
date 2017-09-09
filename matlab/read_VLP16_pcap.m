@@ -260,11 +260,13 @@ if npoints~=inf
     lidar.el = el(1:npoints); % elevation in degrees
     lidar.r  = r(1:npoints);  % range in meters
     lidar.I  = I(1:npoints);  % reflectance {uint8}
+    lidar.t  = t(1:npoints);  % time in seconds
 else
     lidar.az = az(:); % azimuth in degrees
     lidar.el = el(:); % elevation in degrees
     lidar.r  = r(:);  % range in meters
     lidar.I  = I(:);  % reflectance {uint8}
+    lidar.t  = t(:);  % time in seconds
 end
 
 end
