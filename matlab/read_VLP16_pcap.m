@@ -14,6 +14,7 @@ function [lidar,gps] = read_VLP16_pcap(filename,varargin)
 %	- 'debuglevel' : 0 (default)==no output, 1==status updates, 2==verbose
 %	- 'rangegate'  : 2 element vector depicting minimum and maximum range
 %	- 'azgate'     : n x 2 element vector depicting min and max azimuth
+%   - 'maxtinterp' : time(s) threshold to not interpolate azimuths over
 % 
 % Outputs:
 %   - lidar : Description of variable goes here
@@ -36,7 +37,8 @@ function [lidar,gps] = read_VLP16_pcap(filename,varargin)
 % Github        : https://github.com/hokiespurs/velodyne-copter
 
 %% Parse Inputs
-[filename,npoints,debuglevel,rangegate,azgate] = parseInputs(filename,varargin{:});
+[filename,npoints,debuglevel,rangegate,azgate,maxtinterp] = ...
+    parseInputs(filename,varargin{:});
 
 %% Constants
 % lidar data
@@ -65,7 +67,7 @@ allbytes = freadpcap(filename, nbytes2read, debuglevel);
 
 %% Parse Data Blocks
 lidar = get_pcap_data(allbytes, ind_datablock, factory_mode, ...
-    factory_scanner, npoints, debuglevel);
+    factory_scanner, npoints, maxtinterp, debuglevel);
 
 %% Parse Position Blocks
 gps = get_pcap_pos(allbytes, ind_posblock, debuglevel);
@@ -233,7 +235,7 @@ end
 end
 
 function lidar = get_pcap_data(allbytes, ind, factory_mode, ...
-    factory_scanner, npoints, debuglevel)
+    factory_scanner, npoints, maxtinterp, debuglevel)
 % parses the velodyne data blocks
 % returns structure 'lidar' with: time, azimuth, elevation, range
 
@@ -253,7 +255,7 @@ end
 
 %% Main Data Packet 1200 Bytes (az,el,r,I)
 [az,el,r,I]=get_pcap_sphericalcoords(allbytes,ind,t,factory_scanner,...
-    debuglevel);
+    maxtinterp,debuglevel);
 
 if npoints~=inf
     lidar.az = az(1:npoints); % azimuth in degrees
@@ -308,7 +310,7 @@ t = t/1000000; %conver to seconds
 end
 
 function [az,el,r,I]=get_pcap_sphericalcoords(allbytes,ind,t,...
-    factory_scanner,debuglevel)
+    factory_scanner,maxtinterp,debuglevel)
 % Computes the azimuth, elevation, and range for each data packet
 
 %% Compute Range
@@ -339,7 +341,7 @@ az_raw = get_pcap_az(allbytes,ind);
 if debuglevel
    fprintf('%s... Interpolating Azimuth Angle\n',datestr(now)) 
 end
-az = interpAz(az_raw,t);
+az = interpAz(az_raw,t,maxtinterp);
 end
 
 function r = get_pcap_r(allbytes,ind)
@@ -406,7 +408,7 @@ az = az/100; %convert to degrees
 
 end
 
-function az = interpAz(az_raw,t)
+function az = interpAz(az_raw,t,maxtinterp)
 % interpolate azimuth for each time
 %
 % The interpolation method is to:
@@ -423,25 +425,22 @@ indgood = ~isnan(az_raw(:));
 t_az_unique = unique([t(indgood) az_raw(indgood)],'rows');
 t_az_unique_sorted = sortrows(t_az_unique,1);
 
-az = interpVectorAz(t_az_unique_sorted(:,1),t_az_unique_sorted(:,2),t);
+az = interpVectorAz(t_az_unique_sorted(:,1),t_az_unique_sorted(:,2),t,...
+    maxtinterp);
 
 end
 
-function azi = interpVectorAz(t,az,ti)
+function azi = interpVectorAz(t,az,ti,maxtinterp)
 % interpolate an azimuth value across 360 degrees by using vectors
 % az is input in degrees
 % see 'showinterperr' to show that this is ok for small angles
 % for a dAngle = 0.4 degrees, the max error is 0.0000003127 degrees
 
-% dont interpolate over any time gaps : median time gap = 110us
-% could loosen this restriction if there are issues
-TIMETHRESH = 0.0002;
-
 vec_x = cosd(az);
 vec_y = sind(az);
 
-vec_x_i = interp1nanthresh(t,vec_x,ti,TIMETHRESH,inf); 
-vec_y_i = interp1nanthresh(t,vec_y,ti,TIMETHRESH,inf); 
+vec_x_i = interp1nanthresh(t,vec_x,ti,maxtinterp,inf); 
+vec_y_i = interp1nanthresh(t,vec_y,ti,maxtinterp,inf); 
 
 azi = atan2d(vec_y_i,vec_x_i);
 azi(azi<0)=azi(azi<0)+360;
@@ -513,7 +512,8 @@ ind = repmat(permute(ind_posblock(:),[1 2]),1,numel(nmea_ind)) + ...
 nmea = char(allbytes(ind));
 end
 
-function [filename,npoints,debuglevel,rangegate,azgate] = parseInputs(filename,varargin)
+function [filename,npoints,debuglevel,rangegate,azgate,maxtinterp] = ...
+    parseInputs(filename,varargin)
 %%	 Call this function to parse the inputs
 
 % Default Values
@@ -521,6 +521,7 @@ default_npoints     = inf;
 default_debuglevel  = 0;
 default_rangegate   = [0 100];
 default_azgate      = [0 360];
+default_maxtinterp  = 0.002;
 
 % Check Values
 check_filename    = @(x) exist(x,'file');
@@ -528,6 +529,7 @@ check_npoints     = @(x) isnumeric(x);
 check_debuglevel  = @(x) ismember(x,[0 1 2]);
 check_rangegate   = @(x) size(x,2)==2;
 check_azgate      = @(x) size(x,2)==2;
+check_maxtinterp  = @(x) isnumeric(x) & x>0;
 
 % Parser Values
 p = inputParser;
@@ -539,6 +541,8 @@ addParameter(p, 'npoints'    , default_npoints   , check_npoints    );
 addParameter(p, 'debuglevel' , default_debuglevel, check_debuglevel );
 addParameter(p, 'rangegate'  , default_rangegate , check_rangegate  );
 addParameter(p, 'azgate'     , default_azgate    , check_azgate     );
+addParameter(p, 'maxtinterp' , default_maxtinterp, check_maxtinterp );
+
 % Parse
 parse(p,filename,varargin{:});
 % Convert to variables
@@ -547,4 +551,5 @@ npoints    = p.Results.('npoints');
 debuglevel = p.Results.('debuglevel');
 rangegate  = p.Results.('rangegate');
 azgate     = p.Results.('azgate');
+maxtinterp = p.Results.('maxtinterp');
 end
