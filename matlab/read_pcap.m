@@ -1,4 +1,6 @@
 function [lidar,gps] = read_pcap(filename,varargin)
+% READ_PCAP Reads Velodyne VLP16 and HDL32 PCAP data
+%   This file reads and decodes the velodyne lidar data from the pcap
 %   format based on the details in this manual:
 % https://github.com/hokiespurs/velodyne-copter/blob/master/doc/VLP-16%20User%20Manual%20and%20Programming%20Guide%2063-9243%20Rev%20A.pdf
 %   * Note: The Acquisition Mode can not change from dual to strongest/last
@@ -32,6 +34,7 @@ function [lidar,gps] = read_pcap(filename,varargin)
 % Author        : Richie Slocum
 % Email         : richie@cormorantanalytics.com
 % Date Created  : 08-Sep-2017
+% Date Modified : 15-Sep-2017
 % Github        : https://github.com/hokiespurs/velodyne-copter
 
 %% Parse Inputs
