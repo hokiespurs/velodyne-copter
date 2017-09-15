@@ -1,9 +1,8 @@
-function [lidar,gps] = read_VLP16_pcap(filename,varargin)
-% READ_VLP16_PCAP Reads Velodyne VLP16 pcap data
-%   This file reads and decodes the velodyne VLP16 lidar data from the pcap
+function [lidar,gps] = read_pcap(filename,varargin)
 %   format based on the details in this manual:
 % https://github.com/hokiespurs/velodyne-copter/blob/master/doc/VLP-16%20User%20Manual%20and%20Programming%20Guide%2063-9243%20Rev%20A.pdf
-%
+%   * Note: The Acquisition Mode can not change from dual to strongest/last
+%           within the pcap file... the algorithm could be improved here
 %   * Code is based on 'Read_and_Decode_PCAP_v2.m' from Dr. Craig Glennie
 %
 % Required Inputs:
@@ -14,11 +13,11 @@ function [lidar,gps] = read_VLP16_pcap(filename,varargin)
 %	- 'debuglevel' : 0 (default)==no output, 1==status updates, 2==verbose
 %	- 'rangegate'  : 2 element vector depicting minimum and maximum range
 %	- 'azgate'     : n x 2 element vector depicting min and max azimuth
-%   - 'maxtinterp' : time(s) threshold to not interpolate azimuths over
-% 
+%   - 'maxtinterp' : time threshold to not interpolate azimuths over
+%   
 % Outputs:
-%   - lidar : Description of variable goes here
-%   - gps   : Description of variable goes here
+%   - lidar : lidar structure from data packets 
+%   - gps   : gps structure from GPRMC 
 % 
 % Examples:
 %   - Example code goes here
@@ -33,7 +32,6 @@ function [lidar,gps] = read_VLP16_pcap(filename,varargin)
 % Author        : Richie Slocum
 % Email         : richie@cormorantanalytics.com
 % Date Created  : 08-Sep-2017
-% Date Modified : 08-Sep-2017
 % Github        : https://github.com/hokiespurs/velodyne-copter
 
 %% Parse Inputs
@@ -169,6 +167,10 @@ while (ifilepos + 59) < nbytes && (ndatapoints*32*12) < ndesiredpoints
     elseif sourceport == POS_PORT && npacketbytes == POS_BYTES % pos data
         npospoints = npospoints + 1;
         posind(npospoints) = ifilepos + 59;
+    else
+        if debuglevel==2
+            fprintf('Unknown Packet... Filepos: %.010i Port: %05.0f nBytes = %05.0f\n',ifilepos,sourceport,npacketbytes);
+        end
     end
     ifilepos = ifilepos + 50 + double(npacketbytes);
     if ifilepos>nextstatus
@@ -206,7 +208,7 @@ function [factory_mode, factory_scanner] = ...
 %   22h : VLP-16
 
 ind_factory_mode    = ind(1)+1204;
-ind_factory_scanner = ind(1)+1206;
+ind_factory_scanner = ind(1)+1205;
 
 factory_mode_byte    = allbytes(ind_factory_mode);
 factory_scanner_byte = allbytes(ind_factory_scanner);
@@ -216,15 +218,19 @@ switch factory_mode_byte
         factory_mode = 'strongest';
     case hex2dec('38')
         factory_mode =  'last';
-    otherwise
+    case hex2dec('39')
         factory_mode =  'dual';
+    otherwise
+        error('Unknown Factory Mode Byte: %.0f',factory_mode_byte);
 end
 
 switch factory_scanner_byte
     case hex2dec('21')
         factory_scanner = 'HDL-32E';
-    otherwise
+    case hex2dec('22')
         factory_scanner = 'VLP-16';
+    otherwise
+        error('unknown factory scanner byte: %.0f',factory_scanner_byte);
 end
 %% DEBUG
 if debuglevel
@@ -246,7 +252,7 @@ end
 
 %% Time Bytes (t) *time is used for azimuth interpolation
 % size(t) = [100, 12, npackets]
-t = get_pcap_time(allbytes,ind,factory_mode);
+t = get_pcap_time(allbytes,ind,factory_mode,factory_scanner);
 
 %% DEBUG
 if debuglevel
@@ -273,7 +279,7 @@ end
 
 end
 
-function t = get_pcap_time(allbytes,ind,factory_mode)
+function t = get_pcap_time(allbytes,ind,factory_mode,factory_scanner)
 % computes time for each data packet
 % 
 % 'Dual' mode returns two data packets for each pulse, therefore packets
@@ -287,21 +293,30 @@ ind_time_bytes = repmat(permute(ind(:),[2 1]),4,1) + ...
     repmat((1200:1203)',1,ndatapackets);
 t_packet = typecast(allbytes(ind_time_bytes(:)),'uint32');
 
-
 %% Compute Offset Time for each packet
-
-if strcmp(factory_mode,'dual')
-    % 32 x 12
-    t_r = kron(kron(reshape(0:11,2,6),ones(1,2)),ones(16,1));
-    t_c = repmat([0:15 0:15]',1,12);
+if strcmp(factory_scanner,'VLP-16')
+    if strcmp(factory_mode,'dual')
+        % 32 x 12
+        t_r = kron(kron(reshape(0:11,2,6),ones(1,2)),ones(16,1));
+        t_c = repmat([0:15 0:15]',1,12);
+    else
+        % 32 x 12
+        t_r = kron(reshape(0:23,2,12),ones(16,1));
+        t_c = repmat([0:15 0:15]',1,12);
+    end
     t_off = t_r * 55.296 + t_c * 2.304;
-else
-    % 32 x 12
-    t_r = kron(reshape(0:23,2,12),ones(16,1));
-    t_c = repmat([0:15 0:15]',1,12);
-    t_off = t_r * 55.296 + t_c * 2.304;
+elseif strcmp(factory_scanner,'HDL-32E')
+    if strcmp(factory_mode,'dual')
+        % 32 x 12
+        t_r = kron(kron(0:5,ones(1,2)),ones(32,1));
+        t_c = repmat([0:31]',1,12);
+    else
+        % 32 x 12
+        t_r = kron(0:11,ones(32,1));
+        t_c = repmat([0:31]',1,12);
+    end
+    t_off = t_r * 46.080 + t_c * 1.152;
 end
-
 %% Compute Time for each data point
 % 32 x 12 x npackets
 t = repmat(permute(double(t_packet(:)),[3 2 1]),32,12,1) + ...
@@ -342,6 +357,15 @@ if debuglevel
    fprintf('%s... Interpolating Azimuth Angle\n',datestr(now)) 
 end
 az = interpAz(az_raw,t,maxtinterp);
+if debuglevel==2
+   %% 
+   figure(114);clf
+   nonansind = ~isnan(az_raw(:));
+   tazraw = sortrows([t(nonansind) az_raw(nonansind)]);
+   plot(tazraw(1:end-1,1),diff(tazraw(:,1)),'.-');
+   hold on
+   plot([min(tazraw(:,1)) max(tazraw(:,1))],[maxtinterp maxtinterp],'r-');
+end
 end
 
 function r = get_pcap_r(allbytes,ind)
@@ -380,11 +404,14 @@ function el = get_pcap_el(ndatapackets,factory_scanner)
 % the start of each data packet
 
 if strcmp(factory_scanner,'VLP-16')
-VLP16VERTANGLE = [-15 1 -13 -3 -11 5 -9 7 -7 9 -5 11 -3 13 -1 15]';
-el = repmat(VLP16VERTANGLE,2,12,ndatapackets);
-else
-   error('This code has only been tested for VLP-16 data'); 
-   %Add some code in here to handle a different scanner
+    VLP16VERTANGLE = [-15 1 -13 -3 -11 5 -9 7 -7 9 -5 11 -3 13 -1 15]';
+    el = repmat(VLP16VERTANGLE,2,12,ndatapackets);
+elseif strcmp(factory_scanner,'HDL-32E')
+    warning('untested for HDL-32E...remove warning once tested');
+    VLP32VERTANGLE = zeros(32,1);
+    VLP32VERTANGLE(1:2:32) = -92/3:4/3:-32/3;
+    VLP32VERTANGLE(2:2:32) = -28/3:4/3:32/3;
+    el = repmat(VLP32VERTANGLE,2,12,ndatapackets);
 end
 
 end
@@ -478,14 +505,27 @@ end
 
 function gps = get_pcap_pos(allbytes, ind_posblock, debuglevel)
 % Read GPS info from the pos part of the pcap file
-warning('GPS data is not being parsed yet...');
+warning('POS packet is not being parsed yet...');
+%*% Need to:
+%  - parse out the RMC NMEA
+%  - report a flag for if time should be adjusted to UTC using timestamp
+%  - parse out gyro, accel, temperature
 
+%adjusted
 % read time
 gps.t = get_pcap_pos_time(allbytes, ind_posblock);
 
 % read nmea
 gps.nmea = get_pcap_pos_nmea(allbytes, ind_posblock);
 
+gps.rmc = parse_rmc_nmea(gps.nmea);
+
+% parse gyro, accel, temperature fields 
+
+end
+
+function rmc = parse_rmc_nmea(nmea)
+rmc = nan;
 end
 
 function t = get_pcap_pos_time(allbytes, ind_posblock)
@@ -519,13 +559,13 @@ function [filename,npoints,debuglevel,rangegate,azgate,maxtinterp] = ...
 % Default Values
 default_npoints     = inf;
 default_debuglevel  = 0;
-default_rangegate   = [0 100];
+default_rangegate   = [0.5 130]; %per manual
 default_azgate      = [0 360];
 default_maxtinterp  = 0.002;
 
 % Check Values
 check_filename    = @(x) exist(x,'file');
-check_npoints     = @(x) isnumeric(x);
+check_npoints     = @(x) isnumeric(x) & x>0;
 check_debuglevel  = @(x) ismember(x,[0 1 2]);
 check_rangegate   = @(x) size(x,2)==2;
 check_azgate      = @(x) size(x,2)==2;
