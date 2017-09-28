@@ -16,7 +16,9 @@ function [lidar,gps] = read_pcap(filename,varargin)
 %	- 'rangegate'  : 2 element vector depicting minimum and maximum range
 %	- 'azgate'     : n x 2 element vector depicting min and max azimuth
 %   - 'maxtinterp' : time threshold to not interpolate azimuths over
-%   
+%   - 'calctutc'   : (t) try to convert time to utc time based on gps data
+%   - 'calcxyz'    : (t) compute lidar.xyz (spherical to cartesian coords)
+% 
 % Outputs:
 %   - lidar : lidar structure from data packets 
 %   - gps   : gps structure from GPRMC 
@@ -38,7 +40,7 @@ function [lidar,gps] = read_pcap(filename,varargin)
 % Github        : https://github.com/hokiespurs/velodyne-copter
 
 %% Parse Inputs
-[filename,npoints,debuglevel,rangegate,azgate,maxtinterp] = ...
+[filename,npoints,debuglevel,rangegate,azgate,maxtinterp,calctutc,calcxyz] = ...
     parseInputs(filename,varargin{:});
 
 %% Constants
@@ -82,6 +84,41 @@ lidar.el = lidar.el(indgoodrange & indgoodaz);
 lidar.I = lidar.I(indgoodrange & indgoodaz);
 lidar.t = lidar.t(indgoodrange & indgoodaz);
 
+%% Attempt to Convert Time to UTC Using GPS data if desired
+if calctutc
+    lidar.t = convert2utc(lidar.t,gps);   
+end
+
+%% Computer Cartesian Coordinates
+if calcxyz
+   [lidar.x, lidar.y, lidar.z]=sph2cart((90-lidar.az)*pi/180,lidar.el*pi/180,lidar.r); 
+end
+end
+
+function tutc = convert2utc(t,gps)
+% see if gps time exists
+if ~isempty(gps.rmc.t(1))
+    
+    lidartstart = t(1);
+    gpststart = gps.rmc.t(1);
+    gpsstartseconds = gpststart*24*60*60 - floor(gpststart*24)*60*60;
+    if gpsstartseconds-lidartstart < -60*50 %50 minutes off
+        % gps time is in the next hour compared to lidar hour
+        lidaroffset = (floor(gpststart*24) - 1)/24;
+    elseif gpsstartseconds-lidartstart > 60*50 %50 minutes off
+        % gps time is in the previous hour compared to lidar hour
+        lidaroffset = (floor(gpststart*24) + 1)/24;
+    else
+        lidaroffset = (floor(gpststart*24))/24;
+    end
+    % handle hour rollovers in lidar time
+    ind = find(diff(t)<-60*50)+1;
+    for i=1:numel(ind)
+        t(ind(i):end) = t(ind(i):end) + 60*60;
+    end
+    % convert t to utc time
+    tutc = t/60/60/24 + lidaroffset;
+end
 end
 %%
 function allbytes = freadpcap(filename, nbytes, debuglevel)
@@ -508,11 +545,7 @@ end
 
 function gps = get_pcap_pos(allbytes, ind_posblock, debuglevel)
 % Read GPS info from the pos part of the pcap file
-warning('POS packet is not being parsed yet...');
-%*% Need to:
-%  - parse out the RMC NMEA
-%  - report a flag for if time should be adjusted to UTC using timestamp
-%  - parse out gyro, accel, temperature
+%*%  Still need to parse out gyro, accel, temperature
 
 %adjusted
 % read time
@@ -523,13 +556,56 @@ gps.nmea = get_pcap_pos_nmea(allbytes, ind_posblock);
 
 gps.rmc = parse_rmc_nmea(gps.nmea);
 
-% parse gyro, accel, temperature fields 
+%*% parse gyro, accel, temperature fields 
 
 end
 
 function rmc = parse_rmc_nmea(nmea)
-rmc = nan;
+%% Parse into Individual Strings
+COMMAS = [7,14,16,26,28,39,41,47,53,60,66,68];
+gprmcid = nmea(:,1:COMMAS(1)-1);
+i=1;
+tutc    = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+navwarn = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+lat     = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+lathem  = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+lon     = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+lonhem  = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+velocity= nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+course  = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+datefix = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+magvar  = nmea(:,COMMAS(i)+1:COMMAS(i+1)-1);i=i+1;
+checksum= nmea(:,COMMAS(i)+1:COMMAS(end));
+
+%% Convert Time
+rmc.t = datenum(datefix,'ddmmyy') + ...  % date
+        str2num(tutc(:,1:2))/24 + ...    % hours
+        str2num(tutc(:,3:4))/24/60 + ... % minutes
+        str2num(tutc(:,5:6))/24/60/60;   % seconds
+%% Check for Warnings
+if any(navwarn=='V')
+   warning('Warning in GPS data "NAVIGATION RECEIVER WARNING = "V""'); 
 end
+%% Convert Latitude
+latsign = (lathem == 'N')*2-1;
+rmc.lat = latsign .* (str2num(lat(:,1:2)) + str2num(lat(:,end))/60);
+
+%% Convert Longitude
+lonsign = (lonhem == 'E')*2-1;
+rmc.lon = lonsign .* (str2num(lon(:,1:3)) + str2num(lon(:,end))/60);
+
+%% Convert Speed
+rmc.speed = str2num(velocity);
+
+%% Convert Course
+rmc.course = str2num(course);
+
+%% Convert MagVar
+rmc.magvar = str2num(magvar);
+
+
+end
+
 
 function t = get_pcap_pos_time(allbytes, ind_posblock)
 npackets = numel(ind_posblock);
@@ -555,7 +631,7 @@ ind = repmat(permute(ind_posblock(:),[1 2]),1,numel(nmea_ind)) + ...
 nmea = char(allbytes(ind));
 end
 
-function [filename,npoints,debuglevel,rangegate,azgate,maxtinterp] = ...
+function [filename,npoints,debuglevel,rangegate,azgate,maxtinterp,calctutc,calcxyz] = ...
     parseInputs(filename,varargin)
 %%	 Call this function to parse the inputs
 
@@ -565,6 +641,8 @@ default_debuglevel  = 0;
 default_rangegate   = [0.5 130]; %per manual
 default_azgate      = [0 360];
 default_maxtinterp  = 0.002;
+default_tutc        = true;
+default_xyz         = true;
 
 % Check Values
 check_filename    = @(x) exist(x,'file');
@@ -573,6 +651,8 @@ check_debuglevel  = @(x) ismember(x,[0 1 2]);
 check_rangegate   = @(x) size(x,2)==2;
 check_azgate      = @(x) size(x,2)==2;
 check_maxtinterp  = @(x) isnumeric(x) & x>0;
+check_tutc        = @(x) islogical(x);
+check_xyz         = @(x) islogical(x);
 
 % Parser Values
 p = inputParser;
@@ -585,6 +665,8 @@ addParameter(p, 'debuglevel' , default_debuglevel, check_debuglevel );
 addParameter(p, 'rangegate'  , default_rangegate , check_rangegate  );
 addParameter(p, 'azgate'     , default_azgate    , check_azgate     );
 addParameter(p, 'maxtinterp' , default_maxtinterp, check_maxtinterp );
+addParameter(p, 'calctutc'   , default_tutc      , check_tutc       );
+addParameter(p, 'calcxyz'    , default_xyz       , check_xyz        );
 
 % Parse
 parse(p,filename,varargin{:});
@@ -595,4 +677,7 @@ debuglevel = p.Results.('debuglevel');
 rangegate  = p.Results.('rangegate');
 azgate     = p.Results.('azgate');
 maxtinterp = p.Results.('maxtinterp');
+calctutc   = p.Results.('calctutc');
+calcxyz    = p.Results.('calcxyz');
+
 end
