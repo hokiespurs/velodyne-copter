@@ -15,10 +15,11 @@ function [lidar,gps] = read_pcap(filename,varargin)
 %	- 'debuglevel' : 0 (default)==no output, 1==status updates, 2==verbose
 %	- 'rangegate'  : 2 element vector depicting minimum and maximum range
 %	- 'azgate'     : n x 2 element vector depicting min and max azimuth
+%   - 'tgate'      : n x 2 element vector depciting min and max time vals
 %   - 'maxtinterp' : time threshold to not interpolate azimuths over
-%   - 'calctutc'   : (t) try to convert time to utc time based on gps data
-%   - 'calcxyz'    : (t) compute lidar.xyz (spherical to cartesian coords)
-% 
+%   - 'calctutc'   : try to convert time to utc time based on gps data
+%   - 'calcxyz'    : compute lidar.xyz (spherical to cartesian coords)
+%   
 % Outputs:
 %   - lidar : lidar structure from data packets 
 %   - gps   : gps structure from GPRMC 
@@ -39,8 +40,9 @@ function [lidar,gps] = read_pcap(filename,varargin)
 % Date Modified : 15-Sep-2017
 % Github        : https://github.com/hokiespurs/velodyne-copter
 
+%% Read Multiple PCAP
 %% Parse Inputs
-[filename,npoints,debuglevel,rangegate,azgate,maxtinterp,calctutc,calcxyz] = ...
+[filename,npoints,debuglevel,rangegate,azgate,maxtinterp,calctutc,calcxyz,tgate] = ...
     parseInputs(filename,varargin{:});
 
 %% Constants
@@ -75,19 +77,26 @@ lidar = get_pcap_data(allbytes, ind_datablock, factory_mode, ...
 %% Parse Position Blocks
 gps = get_pcap_pos(allbytes, ind_posblock, debuglevel);
 
-%% Trim Data based on Range and Azimuth Gates
-indgoodrange = lidar.r>=rangegate(1) & lidar.r<=rangegate(2);
-indgoodaz = any(lidar.az>=azgate(:,1) & lidar.az<=azgate(:,2));
-lidar.r = lidar.r(indgoodrange & indgoodaz);
-lidar.az = lidar.az(indgoodrange & indgoodaz);
-lidar.el = lidar.el(indgoodrange & indgoodaz);
-lidar.I = lidar.I(indgoodrange & indgoodaz);
-lidar.t = lidar.t(indgoodrange & indgoodaz);
+%% Time Gate Values Before Possible UTC Conversion
+indgoodt_internal = any(lidar.t>=tgate(:,1)' & lidar.t<=tgate(:,2)',2);
 
 %% Attempt to Convert Time to UTC Using GPS data if desired
 if calctutc
     lidar.t = convert2utc(lidar.t,gps);   
 end
+
+%% Time Gate any Values < 3600 (this is the max time in seconds before utc)
+indgoodt_utc = any(lidar.t>=tgate(:,1)' & lidar.t<=tgate(:,2)',2);
+
+%% Trim Data based on Range, Time, and Azimuth Gates
+indgoodrange = any(lidar.r>=rangegate(:,1)' & lidar.r<=rangegate(:,2)',2);
+indgoodaz = any(lidar.az>=azgate(:,1)' & lidar.az<=azgate(:,2)',2);
+indgoodt = indgoodt_utc | indgoodt_internal;
+lidar.r = lidar.r(indgoodrange & indgoodaz & indgoodt);
+lidar.az = lidar.az(indgoodrange & indgoodaz & indgoodt);
+lidar.el = lidar.el(indgoodrange & indgoodaz & indgoodt);
+lidar.I = lidar.I(indgoodrange & indgoodaz & indgoodt);
+lidar.t = lidar.t(indgoodrange & indgoodaz & indgoodt);
 
 %% Computer Cartesian Coordinates
 if calcxyz
@@ -631,7 +640,7 @@ ind = repmat(permute(ind_posblock(:),[1 2]),1,numel(nmea_ind)) + ...
 nmea = char(allbytes(ind));
 end
 
-function [filename,npoints,debuglevel,rangegate,azgate,maxtinterp,calctutc,calcxyz] = ...
+function [filename,npoints,debuglevel,rangegate,azgate,maxtinterp,calctutc,calcxyz,tgate] = ...
     parseInputs(filename,varargin)
 %%	 Call this function to parse the inputs
 
@@ -643,6 +652,7 @@ default_azgate      = [0 360];
 default_maxtinterp  = 0.002;
 default_tutc        = true;
 default_xyz         = true;
+default_tgate       = [0 inf];
 
 % Check Values
 check_filename    = @(x) exist(x,'file');
@@ -653,6 +663,7 @@ check_azgate      = @(x) size(x,2)==2;
 check_maxtinterp  = @(x) isnumeric(x) & x>0;
 check_tutc        = @(x) islogical(x);
 check_xyz         = @(x) islogical(x);
+check_tgate       = @(x) size(x,2)==2;
 
 % Parser Values
 p = inputParser;
@@ -667,6 +678,7 @@ addParameter(p, 'azgate'     , default_azgate    , check_azgate     );
 addParameter(p, 'maxtinterp' , default_maxtinterp, check_maxtinterp );
 addParameter(p, 'calctutc'   , default_tutc      , check_tutc       );
 addParameter(p, 'calcxyz'    , default_xyz       , check_xyz        );
+addParameter(p, 'tgate'      , default_tgate     , check_tgate      );
 
 % Parse
 parse(p,filename,varargin{:});
@@ -679,5 +691,5 @@ azgate     = p.Results.('azgate');
 maxtinterp = p.Results.('maxtinterp');
 calctutc   = p.Results.('calctutc');
 calcxyz    = p.Results.('calcxyz');
-
+tgate      = p.Results.('tgate');
 end
