@@ -453,7 +453,7 @@ function el = get_pcap_el(ndatapackets,factory_scanner)
 % the start of each data packet
 
 if strcmp(factory_scanner,'VLP-16')
-    VLP16VERTANGLE = [-15 1 -13 -3 -11 5 -9 7 -7 9 -5 11 -3 13 -1 15]';
+    VLP16VERTANGLE = [-15 1 -13 3 -11 5 -9 7 -7 9 -5 11 -3 13 -1 15]';
     el = repmat(VLP16VERTANGLE,2,12,ndatapackets);
 elseif strcmp(factory_scanner,'HDL-32E')
     warning('untested for HDL-32E...remove warning once tested');
