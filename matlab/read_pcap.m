@@ -207,15 +207,19 @@ nextstatus = 1/nstatusupdates * nbytes;
 %loop until end of file, or until gathered <ndesiredpoints> indices
 startTime = now;
 while (ifilepos + 59) < nbytes && (ndatapoints*32*12) < ndesiredpoints
+    % assumes IPv4 header
     sourceport   = typecast(allbytes([ifilepos+52 ifilepos+51]),'uint16');
     npacketbytes = typecast(allbytes([ifilepos+56 ifilepos+55]),'uint16');
     
+    ethertype    = typecast(allbytes([ifilepos+30 ifilepos+29]),'uint16');
     if sourceport == DATA_PORT && npacketbytes == DATA_BYTES % lidar data
         ndatapoints = ndatapoints + 1;
         dataind(ndatapoints) = ifilepos + 59;
     elseif sourceport == POS_PORT && npacketbytes == POS_BYTES % pos data
         npospoints = npospoints + 1;
         posind(npospoints) = ifilepos + 59;
+    elseif ethertype == 2054 %ARP protocol
+        npacketbytes = 8; %hard coded with raspberry pi 01/03/2018
     else
         if debuglevel==2
             fprintf('Unknown Packet... Filepos: %.010i Port: %05.0f nBytes = %05.0f\n',ifilepos,sourceport,npacketbytes);
@@ -407,13 +411,18 @@ if debuglevel
 end
 az = interpAz(az_raw,t,maxtinterp);
 if debuglevel==2
-   %% 
+   %% There were issues with data gaps when the scanner would stop sending
+   % data.  A maximum time difference is set as a user adjustable threshold
    figure(114);clf
    nonansind = ~isnan(az_raw(:));
    tazraw = sortrows([t(nonansind) az_raw(nonansind)]);
    plot(tazraw(1:end-1,1),diff(tazraw(:,1)),'.-');
    hold on
    plot([min(tazraw(:,1)) max(tazraw(:,1))],[maxtinterp maxtinterp],'r-');
+   xlabel('Time(s)');
+   ylabel('dt between consecutive azimuth packets')
+   title({'Blue should be below red, indicating no large data gaps',...
+          'If above red threshold, data will not be interpolated'})
 end
 end
 
