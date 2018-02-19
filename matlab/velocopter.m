@@ -1,4 +1,4 @@
-function xyz_final = velocopter(pcap_filename,trajectory_filename,output_filename,varargin)
+function xyz_final = velocopter(pcap_filename,trajectory_filename,output_filename,output_traj_filename,varargin)
 % VELOCOPTER Short summary of this function goes here
 %   Detailed explanation goes here
 % 
@@ -6,12 +6,14 @@ function xyz_final = velocopter(pcap_filename,trajectory_filename,output_filenam
 %	 - pcap_filename         : filename of raw lidar pcap data 
 %	 - trajectory_filename   : csv of postprocessed trajcetory (RTpostprocess) 
 %	 - output_filename       : csv for output lidar data 
+%    - output_traj_filename  : csv for output UTM traj
 % Optional Inputs:
 %	 - 'pcapopt'             : cell of optional inputs to readpcap 
 %	 - 'trajcolnum'          : column numbers from trajectory file 
 %	 - 'mkplots'             : boolean for whether or not to make plots 
 %	 - 'boresightvals'       : boresight from IMU to lidar
-%    - 'outputcsv'           : boolean for whether or not to write csv
+%    - 'outputcsv'           : boolean for whether or not to write lidar csv
+%    - 'outputtrajcsv'       : boolean for whether or not to write traj csv
 %
 % Outputs:
 %   - xyz_final : georectified xyz pointcloud
@@ -32,12 +34,12 @@ function xyz_final = velocopter(pcap_filename,trajectory_filename,output_filenam
 % Author        : Chase Simpson
 % Email         : simpsoch@oregonstate.edu
 % Date Created  : 12-Oct-2017
-% Date Modified : 12-Oct-2017
+% Date Modified : 18-Feb-2018
 % Github        : 
 
 %% Parse Inputs
-[pcap_filename,trajectory_filename,output_filename,pcapopt,trajcolnum,mkplots,boresightvals,outputcsv] = ...
-    parseInputs(pcap_filename,trajectory_filename,output_filename,varargin{:});
+[pcap_filename,trajectory_filename,output_filename,output_traj_filename,pcapopt,trajcolnum,mkplots,boresightvals,outputcsv,outputtrajcsv] = ...
+    parseInputs(pcap_filename,trajectory_filename,output_filename,output_traj_filename,varargin{:});
 fprintf('%-35s : %s\n','Parse Inputs Complete',datestr(now));
 
 %% readpcap (x,y,z,i,t) in SOCS
@@ -87,7 +89,15 @@ if mkplots
     makeXYZstd(UTM_X,UTM_Y,altstd,dname);
     
 end
-
+%% output Trajectory
+% relative Time(seconds),X,Y,Z,Head,Roll,Pitch,Std X,Std Y,Std Z,Std Head,Std Roll,Std Pitch
+if outputtrajcsv
+    fprintf('%-35s : %s\n','Starting Trajectory CSV Output...',datestr(now));
+    outputtrajectorycsv(output_traj_filename,[(timu(:)-timu(1))*24*60*60 UTM_X UTM_Y alt head roll pitch longstd latstd altstd headstd rollstd pitchstd]);
+    fprintf('%-35s : %s\n','Trajectory CSV Output Complete',datestr(now));
+else
+    fprintf('Not outputting a csv. If desired, change "outputtrajcsv" argument to true\n');
+end
 
 end
 
@@ -122,9 +132,19 @@ function outputlidarcsv(output_filename,xyzit)
 %% output a csv file with column titles
 % x, y, z, Intensity, time
 fid = fopen(output_filename,'w+t');
-fprintf(fid,'%s,%s,%s,%s,%s\n','x,y,z,Intensity,time\n');
+fprintf(fid,'x,y,z,Intensity,time\n');
 fprintf(fid,'%.3f,%.3f,%.3f,%d,%.10f\n',xyzit');
 fclose(fid);
+
+end
+
+function outputtrajectorycsv(output_traj_filename,txyzhrpSxSySzShSrSp)
+%% output a csv file with column titles
+% time (s), x, y, z, head, roll, pitch, x std, y std, z std, head std, roll std, pitch std
+fid1 = fopen(output_traj_filename,'w+t');
+fprintf(fid1,'t,x,y,z,heading,roll,pitch,stdx,stdy,stdz,stdheading,stdroll,stdpitch\n');
+fprintf(fid1,'%.10f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n',txyzhrpSxSySzShSrSp');
+fclose(fid1);
 
 end
 
@@ -270,7 +290,7 @@ pitchstd = IMUraw.data(:,trajcolnum(13));
 rollstd  = IMUraw.data(:,trajcolnum(14));
 end
 
-function [pcap_filename,trajectory_filename,output_filename,pcapopt,trajcolnum,mkplots,boresightvals,outputcsv] = parseInputs(pcap_filename,trajectory_filename,output_filename,varargin)
+function [pcap_filename,trajectory_filename,output_filename,output_traj_filename,pcapopt,trajcolnum,mkplots,boresightvals,outputcsv,outputtrajcsv] = parseInputs(pcap_filename,trajectory_filename,output_filename,output_traj_filename,varargin)
 
 % Default Values
 default_pcapopt        = {'rangegate',[2 100]};
@@ -279,16 +299,20 @@ default_trajcolnum     = [1 2 1 2 3 15 16 17 18 19 20 24 25 26];
 default_mkplots        = true;
 % x,y,z,rx,ry,rz (mm,degrees)
 default_boresightvals  = [-38.956 21.296 118.983 0 -15 0]; 
-default_outputcsv    = true;
+default_outputcsv      = true;
+default_outputtrajcsv  = true;
+
 % Check Values
 check_pcap_filename        = @(x) ischar(x) | isstring(x) | iscell(x);
 check_trajectory_filename  = @(x) ischar(x) | isstring(x) ;
 check_output_filename      = @(x) (ischar(x) | isstring(x)) & strcmp(x(end-3:end),'.csv');
+check_output_traj_filename = @(x) (ischar(x) | isstring(x)) & strcmp(x(end-3:end),'.csv');
 check_pcapopt              = @(x) iscell(x);
 check_trajcolnum           = @(x) isnumeric(x) & numel(x)==14;
 check_mkplots              = @(x) islogical(x) & numel(x)==1;
 check_boresightvals        = @(x) isnumeric(x) & numel(x)==6;
 check_outputcsv            = @(x) islogical(x);
+check_outputtrajcsv        = @(x) islogical(x);
 
 % Parser Values
 p = inputParser;
@@ -296,22 +320,25 @@ p = inputParser;
 addRequired(p, 'pcap_filename'       , check_pcap_filename       );
 addRequired(p, 'trajectory_filename' , check_trajectory_filename );
 addRequired(p, 'output_filename'     , check_output_filename     );
+addRequired(p, 'output_traj_filename', check_output_traj_filename);
 % Parameter Arguments
-addParameter(p, 'pcapopt'       , default_pcapopt      , check_pcapopt       );
-addParameter(p, 'trajcolnum'    , default_trajcolnum   , check_trajcolnum    );
-addParameter(p, 'mkplots'       , default_mkplots      , check_mkplots       );
-addParameter(p, 'boresightvals' , default_boresightvals, check_boresightvals );
-addParameter(p, 'outputcsv'     , default_outputcsv    , check_outputcsv     );
+addParameter(p, 'pcapopt'            , default_pcapopt          , check_pcapopt       );
+addParameter(p, 'trajcolnum'         , default_trajcolnum       , check_trajcolnum    );
+addParameter(p, 'mkplots'            , default_mkplots          , check_mkplots       );
+addParameter(p, 'boresightvals'      , default_boresightvals    , check_boresightvals );
+addParameter(p, 'outputcsv'          , default_outputcsv        , check_outputcsv     );
+addParameter(p, 'outputtrajcsv'      , default_outputtrajcsv    , check_outputtrajcsv );
 
 % Parse
-parse(p,pcap_filename,trajectory_filename,output_filename,varargin{:});
+parse(p,pcap_filename,trajectory_filename,output_filename,output_traj_filename,varargin{:});
 % Convert to variables
-pcap_filename       = p.Results.('pcap_filename');
-trajectory_filename = p.Results.('trajectory_filename');
-output_filename     = p.Results.('output_filename');
-pcapopt             = p.Results.('pcapopt');
-trajcolnum          = p.Results.('trajcolnum');
-mkplots             = p.Results.('mkplots');
-boresightvals       = p.Results.('boresightvals');
-outputcsv           = p.Results.('outputcsv');
+pcap_filename           = p.Results.('pcap_filename');
+trajectory_filename     = p.Results.('trajectory_filename');
+output_filename         = p.Results.('output_filename');
+pcapopt                 = p.Results.('pcapopt');
+trajcolnum              = p.Results.('trajcolnum');
+mkplots                 = p.Results.('mkplots');
+boresightvals           = p.Results.('boresightvals');
+outputcsv               = p.Results.('outputcsv');
+outputtrajcsv           = p.Results.('outputtrajcsv');
 end
