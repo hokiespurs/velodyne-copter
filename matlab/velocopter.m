@@ -35,6 +35,13 @@ function xyz_final = velocopter(pcap_filename,trajectory_filename,output_filenam
 % Date Modified : 12-Oct-2017
 % Github        : 
 
+%% Check Inputs
+if nargin==0
+    pcap_filename = uigetfile('*.pcap','Select PCAP file');
+    trajectory_filename = uigetfile('*.csv','Select Trajectory File');
+    output_filename = uiputfile('*.csv','Select Output CSV Name for Lidar Data');
+end
+
 %% Parse Inputs
 [pcap_filename,trajectory_filename,output_filename,pcapopt,trajcolnum,mkplots,boresightvals,outputcsv] = ...
     parseInputs(pcap_filename,trajectory_filename,output_filename,varargin{:});
