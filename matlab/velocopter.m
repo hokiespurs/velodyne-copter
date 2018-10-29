@@ -67,16 +67,19 @@ xyz_final = geolocation(xyz_imu,int_x_utm,int_y_utm,int_z,int_roll,int_pitch,int
 fprintf('%-35s : %s\n','Geolocation Complete',datestr(now));
 
 %% output pointcloud
-% x,y,z,I,relative Time (seconds)
+% x,y,z,I,Time (seconds of week)
 if outputcsv
     fprintf('%-35s : %s\n','Starting CSV Output...',datestr(now));
-    outputlidarcsv(output_filename,[xyz_final double(I(:)) (tlidar(:)-tlidar(1))*24*60*60]);
+    outputlidarcsv(output_filename,[xyz_final double(I(:)) secondsofweek(tlidar)]);
     fprintf('%-35s : %s\n','CSV Output Complete',datestr(now));
 else
     fprintf('Not outputting a csv. If desired, change "outputcsv" argument to true\n');
 end
 %% output optional plots
 % default to save in the same directory as the pcap file
+ind1 = find(timu>tlidar(1),1,'first');
+ind2 = find(timu>tlidar(end),1,'first');
+
 if mkplots
     % determine save directory
     if isstruct(pcap_filename)
@@ -86,17 +89,23 @@ if mkplots
     end
     
     % make x,y,vertical accuracy plot
-    makeXYZstd(UTM_X,UTM_Y,altstd,dname);
-    
+    makeXYZstd(UTM_X(ind1:ind2),UTM_Y(ind1:ind2),altstd(ind1:ind2),dname);
 end
 %% output Trajectory
-% relative Time(seconds),X,Y,Z,Head,Roll,Pitch,Std X,Std Y,Std Z,Std Head,Std Roll,Std Pitch
+% seconds of week,X,Y,Z,Head,Roll,Pitch,Std X,Std Y,Std Z,Std Head,Std Roll,Std Pitch
 if outputtrajcsv
     fprintf('%-35s : %s\n','Starting Trajectory CSV Output...',datestr(now));
-    outputtrajectorycsv(output_traj_filename,[(timu(:)-timu(1))*24*60*60 UTM_X UTM_Y alt head roll pitch longstd latstd altstd headstd rollstd pitchstd]);
+    outputtrajectorycsv(output_traj_filename,[secondsofweek(timu(ind1:ind2)) UTM_X(ind1:ind2) UTM_Y(ind1:ind2) alt(ind1:ind2) head(ind1:ind2) roll(ind1:ind2) pitch(ind1:ind2) longstd(ind1:ind2) latstd(ind1:ind2) altstd(ind1:ind2) headstd(ind1:ind2) rollstd(ind1:ind2) pitchstd(ind1:ind2)]);
     fprintf('%-35s : %s\n','Trajectory CSV Output Complete',datestr(now));
 else
-    fprintf('Not outputting a csv. If desired, change "outputtrajcsv" argument to true\n');
+    fprintf('Not outputting a trajrctory csv. If desired, change "outputtrajcsv" argument to true\n');
+
+% if outputtrajcsv
+%     fprintf('%-35s : %s\n','Starting Trajectory CSV Output...',datestr(now));
+%     outputtrajectorycsv(output_traj_filename,[secondsofweek(timu) UTM_X UTM_Y alt head roll pitch longstd latstd altstd headstd rollstd pitchstd]);
+%     fprintf('%-35s : %s\n','Trajectory CSV Output Complete',datestr(now));
+% else
+%     fprintf('Not outputting a trajrctory csv. If desired, change "outputtrajcsv" argument to true\n');
 end
 
 end
@@ -150,7 +159,6 @@ end
 
 function xyz_final = geolocation(xyz_imu,int_x_utm,int_y_utm,int_z,int_roll,int_pitch,int_head)
 %% Used to convert VLP16 Data from IMURF to MappingRF
-   
 r11 = cosd(int_pitch).*sind(int_head);
 r12 = -1*cosd(int_head).*cosd(int_roll)-sind(int_head).*sind(int_pitch).*sind(int_roll);
 r13 = cosd(int_head).*sind(int_roll)-sind(int_head).*sind(int_pitch).*cosd(int_roll);
@@ -194,7 +202,6 @@ FLIP = [0 -1 0;     %if there is no redefinition neccassary replace with a
         0 0 1];
 
 FLIP2 = [0 0 1;1 0 0;0 1 0];
-    
     
 tx      = boresightvals(1);
 ty      = boresightvals(2);
